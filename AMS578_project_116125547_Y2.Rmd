@@ -1,0 +1,249 @@
+---
+title: "AMS578_project_116125547"
+author: 'Ajeetkumar Rai (Id : 116125547)'
+date: "2025-04-30"
+output: pdf_document
+---
+#Library
+
+```{r}
+required_packages <- c("tidyverse", "caret", "neuralnet", "ggplot2", "glmnet",
+  "rpart", "rattle", "factoextra", "cluster","gridExtra","corrplot","lmtest","car","forecast","e1071")
+for (pkg in required_packages) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg) }
+  library(pkg, character.only = TRUE)}
+```
+
+# Data
+```{r}
+df <- read.csv("C:/Users/Ajeet Rai/OneDrive/Desktop/SBU/Academics/Sem III/AMS 578 Regression Theory/Project/2025 Individual Project data.csv")
+head(df)
+```
+# Summary
+## Shape
+```{r}
+dim(df)
+```
+
+## Datatypes
+```{r}
+str(df)
+```
+## Descriptions
+```{r}
+summary(df)
+```
+# Imputing missing values
+```{r}
+dim(df)
+df = na.omit(df)
+dim(df)
+```
+# Independent vs dependent
+```{r}
+Y1 <- df$Income
+Y2 <- df$Unemployment
+Y=Y2   #Y=Y1
+X <- df[, !(names(df) %in% c("Income", "Unemployment","State","County"))]
+```
+
+# Exploratory data analysis
+## Correlation
+### As we can see collinearity between features, we'll need check VIF carefully.
+```{r corrplot, fig.width=14, fig.height=8}
+correlation_matrix <- cor(X)
+corrplot(correlation_matrix, method = "number", number.cex = 0.7, tl.cex = 0.8)
+```
+
+## Distributin (Dependent)
+### Y1 and Y2 are slightly skewed, and transformation is needed to prevent this.
+```{r}
+p1 <- ggplot(data = data.frame(Y1), aes(x = Y1)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = 'skyblue', color = 'black') +
+  ggtitle('Distribution of Y1') +
+  theme_minimal()
+
+p2 <- ggplot(data = data.frame(Y2), aes(x = Y2)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = 'lightgreen', color = 'black') +
+  ggtitle('Distribution of Y2') +
+  theme_minimal()
+
+grid.arrange(p1, p2, ncol = 2)
+
+```
+
+## Distributin (Independent)
+### Independent features are skewed, and transformation is needed to prevent this.
+```{r, fig.width=14, fig.height=12}
+plots <- lapply(names(X), function(colname) {
+  if (is.numeric(X[[colname]])) {
+    ggplot(X, aes_string(x = colname)) +
+      geom_histogram(bins = 30, fill = "skyblue", color = "black") +
+      ggtitle(paste("Histogram of", colname)) +
+      theme_minimal()
+  } else {
+    ggplot(X, aes_string(x = colname)) +
+      geom_bar(fill = "lightgreen", color = "black") +
+      ggtitle(paste("Bar Plot of", colname)) +
+      theme_minimal()
+  }
+})
+
+grid.arrange(grobs = plots, ncol = 5)
+
+```
+
+## Outliers 
+### Need careful treatment for outliers as it will effect cook's distance
+```{r, fig.width=16, fig.height=12}
+plots <- lapply(names(X), function(colname) {
+  if (is.numeric(X[[colname]])) {
+    ggplot(X, aes_string(y = colname)) +  
+      geom_boxplot(fill = "lightblue", color = "black", outlier.color = "red") +
+      ggtitle(paste("Boxplot of", colname)) +
+      theme_minimal()
+  } else {
+    NULL 
+  }
+})
+plots <- Filter(Negate(is.null), plots)
+
+grid.arrange(grobs = plots, ncol = 5)
+```
+
+# Feature selection
+## As we have seen above so many features are correlated and among 34 features many of them are not contributing in Y1/Y2.
+## So, we will use STEP wise model in both direction to selected only meaningful features.
+```{r}
+full_model <- lm(Y ~ ., data = X)
+stepwise_model_both <- step(full_model, direction = "both")
+summary(stepwise_model_both)
+selected_features_step <- names(coef(stepwise_model_both))[-1]
+selected_features_step
+```
+
+### Filtering out these features
+```{r}
+X=X[selected_features_step]
+```
+# Base Model with main effect before diagnosis
+```{r}
+fit1 <- lm(Y ~ ., data = X)
+base_model_main_effect <- summary(fit1)
+r2 <- base_model_main_effect$r.squared
+adj_r2 <- base_model_main_effect$adj.r.squared
+```
+
+## Base Model diagnosis with main effect
+```{r,fig.width=14, fig.height=8}
+cat("R2:", r2, "\n")
+cat("Adjusted R2:", adj_r2, "\n")
+cat("AIC:", AIC(fit1), "\n")
+cat("BIC:", BIC(fit1), "\n")
+print(dwtest(fit1))
+print(shapiro.test(residuals(fit1)))
+print(vif(fit1))
+par(mfrow = c(2, 2))
+plot(fit1)
+  
+```
+
+### As we can see we got good R2 but assumptions failed.
+# Treatment in main effect
+## Dropping features with VIF<5
+```{r}
+vif_values <- vif(fit1)
+low_vif_features <- names(vif_values)[vif_values < 5]
+print(low_vif_features)
+X <- X[low_vif_features]
+dim(X)
+```
+## Tranformation
+```{r}
+Y <- bestNormalize::yeojohnson(Y)$x.t
+X[abs(apply(X, 2, e1071::skewness)) > 1] <- lapply(X[abs(apply(X, 2, e1071::skewness)) > 1], log1p)  # Log-transform skewed X
+head(X)
+```
+
+## Base model after diagnosis(VIF filter+transformation) with main effect
+```{r}
+fit2 <- lm(Y ~ ., data = X)
+base_model_main_effect <- summary(fit2)
+r2 <- base_model_main_effect$r.squared
+adj_r2 <- base_model_main_effect$adj.r.squared
+```
+
+```{r,fig.width=14, fig.height=8}
+cat("R2:", r2, "\n")
+cat("Adjusted R2:", adj_r2, "\n")
+cat("AIC:", AIC(fit2), "\n")
+cat("BIC:", BIC(fit2), "\n")
+print(dwtest(fit2))
+print(shapiro.test(residuals(fit2)))
+print(vif(fit2))
+par(mfrow = c(2, 2))
+plot(fit2)
+```
+## Dropping outliers for cooks distance
+```{r}
+dim(X)
+cooks_dist <- cooks.distance(fit2)
+threshold <- 4 / length(cooks_dist)
+influential_points <- which(cooks_dist > threshold)
+X <- X[-influential_points, ]
+Y <- Y[-influential_points]
+```
+
+## Base model after diagnosis(Influential points) with main effect
+```{r}
+fit3 <- lm(Y ~ ., data = X)
+base_model_main_effect <- summary(fit3)
+r2 <- base_model_main_effect$r.squared
+adj_r2 <- base_model_main_effect$adj.r.squared
+```
+
+```{r,fig.width=14, fig.height=8}
+cat("R2:", r2, "\n")
+cat("Adjusted R2:", adj_r2, "\n")
+cat("AIC:", AIC(fit3), "\n")
+cat("BIC:", BIC(fit3), "\n")
+print(dwtest(fit3))
+print(shapiro.test(residuals(fit3)))
+print(vif(fit3))
+par(mfrow = c(2, 2))
+plot(fit3)
+```
+
+
+## Only multicollineariy has been passed, but plot has been improved.
+
+# two main effect
+## All combination of two main effect has been implemented and the best features extracted using STEP.
+```{r}
+full_model <- lm(Y ~ (.)^2, data = X)
+step_model <- step(full_model, direction = "both", trace = FALSE)
+final_formula <- formula(step_model)
+final_fit <- lm(final_formula, data = X)
+cooks_dist <- cooks.distance(final_fit)
+threshold <- 4 / length(cooks_dist)
+influential_points <- which(cooks_dist > threshold)
+X <- X[-influential_points, , drop = FALSE]
+Y <- Y[-influential_points]
+final_fit <- lm(final_formula, data = X)
+model_summary <- summary(final_fit)
+r2 <- model_summary$r.squared
+adj_r2 <- model_summary$adj.r.squared
+cat("R2:", r2, "\n")
+cat("Adjusted R2:", adj_r2, "\n")
+cat("AIC:", AIC(final_fit), "\n")
+cat("BIC:", BIC(final_fit), "\n")
+print(final_formula)
+```
+
+```{r,fig.width=14, fig.height=8}
+print(dwtest(final_fit))
+print(shapiro.test(residuals(final_fit)))
+par(mfrow = c(2, 2))
+plot(final_fit)
+```
